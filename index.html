@@ -192,8 +192,8 @@ function colorear(v, e) {
   return C[k - 1].map((c, n) => c + (C[k][n] - c) * t);
 }
 
-function render(i, v, esc) {
-  const g = geo(i), ow = i.ancho, oh = i.alto, cv = document.createElement("canvas");
+function render(i, v, esc, ow = i.ancho, oh = i.alto) {
+  const g = geo(i), cv = document.createElement("canvas");
   cv.width = ow; cv.height = oh;
   const ctx = cv.getContext("2d"), im = ctx.createImageData(ow, oh), d = im.data;
   const ax = g.ne[0] - g.nw[0], ay = g.ne[1] - g.nw[1], bx = g.sw[0] - g.nw[0], by = g.sw[1] - g.nw[1];
@@ -204,7 +204,7 @@ function render(i, v, esc) {
       const col = Math.floor((g.nw[0] + u * ax + s * bx - i.ulx) / i.sx);
       const row = Math.floor((g.nw[1] + u * ay + s * by - i.uly) / i.sy);
       if (col < 0 || col >= i.ancho || row < 0 || row >= i.alto) continue;
-      const val = v[row * i.ancho + col];
+      const val = typeof v === "function" ? v(row, col) : v[row * i.ancho + col];
       if (val == null || val <= -9000) continue;
       const [R, G, B] = colorear(val, esc), o = (j * ow + k) * 4;
       d[o] = R; d[o + 1] = G; d[o + 2] = B; d[o + 3] = 255;
@@ -295,11 +295,22 @@ function cambiarParametro(k, primera) {
   grafica(); mostrar(primera);
 }
 
-/* ---------- Detalle a resolución nativa (rasters grandes): teselas de la zona visible ---------- */
-const turls = new Map();
-let hr = null, hrTimer;
+/* ---------- Detalle a resolución nativa (rasters grandes) ----------
+   Se descargan las teselas de la zona visible y se pintan juntas en UNA sola imagen
+   (sin costuras entre teselas), con tantos píxeles como pide la pantalla. */
+const tvals = new Map(), enVuelo = new Map();
+let hr = null, hrTimer, hrTok = 0;
 function ovOp() { if (overlay) overlay.setOpacity(hr && hr.completo ? 0 : +$("op").value); }
-function hrReset() { if (hr) map.removeLayer(hr.grupo); hr = null; ovOp(); }
+function hrReset() { hrTok++; if (hr && hr.ov) map.removeLayer(hr.ov); hr = null; ovOp(); }
+function hrTesela(tabla, key, x, y) {
+  const k = tabla + "|" + key;
+  if (tvals.has(k)) return Promise.resolve();
+  if (!enVuelo.has(k)) enVuelo.set(k, rpc("raster_tesela", {p_tabla: tabla, p_x: x, p_y: y}).then(v => {
+    if (tvals.size > 200) tvals.delete(tvals.keys().next().value);
+    tvals.set(k, v ? Float32Array.from(v, a => a == null ? -9999 : a) : null);
+  }).finally(() => enVuelo.delete(k)));
+  return enVuelo.get(k);
+}
 async function hrCargar() {
   if ($("visor").hidden || !S.emb || !S.par) return;
   const p = P(), i = p.imagenes[S.idx], o = i.o;
@@ -307,46 +318,47 @@ async function hrCargar() {
   const c = map.getCenter(), res = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / 2 ** map.getZoom();
   if (res >= Math.abs(i.sx) / 2) { if (hr) hrReset(); return; } // la versión reducida basta
   const esc = escala(p, i), ek = esc.limites[0] + "|" + esc.limites[esc.limites.length - 1];
-  if (!hr || hr.tabla !== i.tabla || hr.ek !== ek) {
-    hrReset(); hr = {tabla: i.tabla, ek, grupo: L.layerGroup().addTo(map), hechas: new Set(), completo: false};
-  }
-  const st = hr, T = o.tesela, w = T * o.sx, h = T * o.sy;
+  if (!hr || hr.tabla !== i.tabla || hr.ek !== ek) { hrReset(); hr = {tabla: i.tabla, ek, ov: null, vista: "", completo: false}; }
+  const st = hr, tk = ++hrTok, T = o.tesela, w = T * o.sx, h = T * o.sy;
   const b = map.getBounds(), q = [b.getSouthWest(), b.getNorthEast(), b.getNorthWest(), b.getSouthEast()]
     .map(x => proj4("EPSG:4326", "EPSG:32630", [x.lng, x.lat]));
   const xs = q.map(x => x[0]), ys = q.map(x => x[1]), nc = Math.ceil(o.ancho / T), nr = Math.ceil(o.alto / T);
   const cl = (v, n) => Math.max(0, Math.min(n - 1, v));
   const c0 = cl(Math.floor((Math.min(...xs) - o.ulx) / w), nc), c1 = cl(Math.floor((Math.max(...xs) - o.ulx) / w), nc);
   const r0 = cl(Math.floor((Math.max(...ys) - o.uly) / h), nr), r1 = cl(Math.floor((Math.min(...ys) - o.uly) / h), nr);
-  const pend = [];
-  for (let r = r0; r <= r1; r++) for (let k = c0; k <= c1; k++) if (!st.hechas.has(r + "|" + k)) pend.push([r, k]);
-  st.completo = pend.length === 0; ovOp();
-  if (!pend.length) return;
-  $("estado").textContent = `Cargando detalle a ${nf(Math.abs(o.sx), 0)} m (${pend.length} teselas)…`;
-  let n = 0;
-  const trabajar = async () => {
-    while (n < pend.length && hr === st) {
-      const [r, k] = pend[n++], key = r + "|" + k;
-      try {
-        const t = {ulx: o.ulx + k * w, uly: o.uly + r * h, sx: o.sx, sy: o.sy, ancho: T, alto: T};
-        const uk = `${i.tabla}|${key}|${ek}`;
-        let url = turls.get(uk);
-        if (url === undefined) {
-          const v = await rpc("raster_tesela", {p_tabla: i.tabla, p_x: t.ulx + w / 2, p_y: t.uly + h / 2});
-          url = v ? render(t, v, esc) : null;
-          if (turls.size > 600) turls.delete(turls.keys().next().value);
-          turls.set(uk, url);
-        }
-        if (hr !== st) return;
-        if (url) L.imageOverlay(url, geo(t).bounds, {opacity: +$("op").value, className: "pix"}).addTo(st.grupo);
-        st.hechas.add(key);
-      } catch (e) { /* se reintenta en el siguiente movimiento del mapa */ }
-    }
-  };
-  await Promise.all(Array.from({length: 6}, trabajar));
-  if (hr === st) {
-    st.completo = pend.every(([r, k]) => st.hechas.has(r + "|" + k)); ovOp();
-    $("estado").textContent = st.completo ? "" : "Algunas teselas no se pudieron cargar; mueve el mapa para reintentar.";
+  const lista = [];
+  for (let r = r0; r <= r1; r++) for (let k = c0; k <= c1; k++) lista.push([r, k]);
+  const pend = lista.filter(([r, k]) => !tvals.has(`${i.tabla}|${r}|${k}`));
+  if (pend.length) {
+    st.completo = false; ovOp();
+    $("estado").textContent = `Cargando detalle a ${nf(Math.abs(o.sx), 0)} m (${pend.length} teselas)…`;
+    let n = 0;
+    const trabajar = async () => {
+      while (n < pend.length && tk === hrTok) {
+        const [r, k] = pend[n++];
+        try { await hrTesela(i.tabla, `${r}|${k}`, o.ulx + (k + .5) * w, o.uly + (r + .5) * h); } catch (e) { /* se reintenta al mover */ }
+      }
+    };
+    await Promise.all(Array.from({length: 6}, trabajar));
   }
+  if (tk !== hrTok || hr !== st) return;
+  const faltan = lista.filter(([r, k]) => !tvals.has(`${i.tabla}|${r}|${k}`)).length;
+  const vista = [r0, r1, c0, c1, map.getZoom(), faltan].join("|");
+  if (vista !== st.vista) {
+    const m = {ulx: o.ulx + c0 * w, uly: o.uly + r0 * h, sx: o.sx, sy: o.sy, ancho: (c1 - c0 + 1) * T, alto: (r1 - r0 + 1) * T};
+    const salida = Math.max(Math.abs(o.sx), res); // ~1 píxel de imagen por píxel de pantalla
+    const ow = Math.min(m.ancho, Math.ceil(m.ancho * Math.abs(o.sx) / salida));
+    const oh = Math.min(m.alto, Math.ceil(m.alto * Math.abs(o.sy) / salida));
+    const get = (row, col) => {
+      const t = tvals.get(`${i.tabla}|${r0 + Math.floor(row / T)}|${c0 + Math.floor(col / T)}`);
+      return t ? t[(row % T) * T + (col % T)] : -9999;
+    };
+    const nuevo = L.imageOverlay(render(m, get, esc, ow, oh), geo(m).bounds, {opacity: +$("op").value, className: "pix"}).addTo(map);
+    if (st.ov) map.removeLayer(st.ov);
+    st.ov = nuevo; st.vista = vista;
+  }
+  st.completo = faltan === 0; ovOp();
+  $("estado").textContent = faltan ? "Algunas teselas no se pudieron cargar; mueve el mapa para reintentar." : "";
 }
 
 let tok = 0;
@@ -429,7 +441,7 @@ $("prev").onclick = () => { S.idx--; mostrar(false); };
 $("next").onclick = () => { S.idx++; mostrar(false); };
 $("stat").onchange = grafica;
 $("esc").onchange = () => mostrar(false);
-$("op").oninput = e => { ovOp(); if (hr) hr.grupo.eachLayer(l => l.setOpacity(+e.target.value)); };
+$("op").oninput = e => { ovOp(); if (hr && hr.ov) hr.ov.setOpacity(+e.target.value); };
 document.addEventListener("keydown", e => {
   if ($("visor").hidden || /SELECT|INPUT/.test(e.target.tagName)) return;
   if (e.key === "ArrowLeft" && S.idx > 0) { S.idx--; mostrar(false); }
