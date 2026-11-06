@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embalses · Sentinel-2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+:root{--paper:#f1f4f2;--panel:#fbfcfb;--ink:#10282f;--muted:#5b7077;--line:#c9d4d2;--water:#0a6c7a;--mark:#b4441c;
+ --serif:"Fraunces",Georgia,serif;--sans:"Instrument Sans",system-ui,sans-serif}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--paper);color:var(--ink);font:15px/1.45 var(--sans)}
+[hidden]{display:none!important}
+button,select{font:inherit;color:inherit}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--water);outline-offset:2px}
+
+/* Inicio */
+#inicio{max-width:760px;margin:0 auto;padding:9vh 24px 48px}
+#inicio h1{font:700 clamp(2rem,5vw,3.2rem)/1.05 var(--serif);margin:0 0 .6rem;letter-spacing:-.01em}
+#inicio p.sub{color:var(--muted);margin:0 0 2.5rem;max-width:52ch}
+#lista{list-style:none;margin:0;padding:0;border-top:1.5px solid var(--ink)}
+#lista button{all:unset;box-sizing:border-box;width:100%;display:grid;grid-template-columns:1fr auto;gap:2px 24px;
+ padding:16px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+#lista button:hover,#lista button:focus-visible{background:#e3ebe9}
+#lista .n{font:500 1.35rem var(--serif)}
+#lista .m{color:var(--muted);font-size:.85rem;text-align:right}
+#lista .v{grid-column:1/-1;color:var(--muted);font-size:.9rem}
+#lista .v b{color:var(--water);font-weight:600}
+
+/* Visor */
+#visor{display:grid;grid-template-columns:320px 1fr;height:100vh}
+aside{background:var(--panel);border-right:1px solid var(--line);padding:18px 18px 24px;overflow:auto;display:flex;flex-direction:column;gap:18px}
+#volver{all:unset;cursor:pointer;color:var(--water);font-weight:500}
+#volver:hover{text-decoration:underline}
+aside h2{font:700 1.7rem/1.1 var(--serif);margin:0}
+.lab{font-size:.8rem;color:var(--muted);margin-bottom:6px;display:block}
+.seg{display:flex;border:1px solid var(--ink);border-radius:4px;overflow:hidden}
+.seg button{flex:1;border:0;background:none;padding:7px 8px;border-right:1px solid var(--ink)}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--paper)}
+.fecha{display:grid;grid-template-columns:36px 1fr 36px;gap:6px}
+.fecha button,.fecha select,#stat,#esc{border:1px solid var(--line);background:#fff;border-radius:4px;padding:6px}
+.fecha button:hover{border-color:var(--ink)}
+#esc{width:100%}
+input[type=range]{width:100%;accent-color:var(--water);margin:10px 0 0}
+dl{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0}
+dt{color:var(--muted)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;font-weight:500}
+#barra{height:12px;border-radius:2px;border:1px solid var(--line)}
+#ticks{display:flex;justify-content:space-between;font-size:.75rem;color:var(--muted);margin-top:3px;font-variant-numeric:tabular-nums}
+main{display:grid;grid-template-rows:1fr 300px;min-width:0;min-height:0}
+#map{min-height:0;background:#cfd9d7}
+#graf{background:var(--panel);border-top:1px solid var(--line);padding:10px 16px 12px;display:flex;flex-direction:column;min-height:0}
+.gcab{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.gcab h3{font:500 1.05rem var(--serif);margin:0}
+.cv{position:relative;flex:1;min-height:0}
+.leaflet-container{font-family:var(--sans)}
+.pix{image-rendering:pixelated}
+@media(max-width:820px){
+ #visor{grid-template-columns:1fr;height:auto}
+ aside{border-right:0;border-bottom:1px solid var(--line)}
+ main{grid-template-rows:60vh 300px}
+}
+</style>
+</head>
+<body>
+
+<section id="inicio">
+  <h1>Calidad del agua en embalses</h1>
+  <p class="sub">Parámetros derivados de Sentinel-2. Elige un embalse para ver cada imagen sobre el mapa y su evolución en el tiempo.</p>
+  <ul id="lista"></ul>
+  <p id="vacio" class="sub">Cargando datos desde PostGIS…</p>
+</section>
+
+<section id="visor" hidden>
+  <aside>
+    <button id="volver">‹ Todos los embalses</button>
+    <h2 id="tit"></h2>
+    <div><span class="lab">Parámetro</span><div class="seg" id="params"></div></div>
+    <div>
+      <span class="lab">Fecha de la imagen</span>
+      <div class="fecha"><button id="prev" aria-label="Fecha anterior">‹</button><select id="fecha"></select><button id="next" aria-label="Fecha siguiente">›</button></div>
+      <input type="range" id="slider" min="0" value="0" aria-label="Seleccionar fecha">
+    </div>
+    <dl id="stats"></dl>
+    <div id="estado" class="lab"></div>
+    <!-- Selector de escala oculto: se usa "hist". Para mostrarlo de nuevo, quitar el atributo hidden. -->
+    <div hidden><span class="lab">Escala de color</span><select id="esc"><option value="hist">Histórico del embalse</option><option value="img">Solo esta imagen</option><option value="fija">Fija (original)</option></select></div>
+    <div><span class="lab" id="leyT"></span><div id="barra"></div><div id="ticks"></div></div>
+    <div><span class="lab">Opacidad de la capa</span><input type="range" id="op" min="0" max="1" step=".05" value=".85"></div>
+  </aside>
+  <main>
+    <div id="map"></div>
+    <div id="graf">
+      <div class="gcab"><h3 id="gt"></h3>
+        <select id="stat" aria-label="Estadístico">
+          <option value="media">Media</option><option value="mediana">Mediana</option>
+        </select></div>
+      <div class="cv"><canvas id="cv"></canvas></div>
+    </div>
+  </main>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="config.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let EMB = [];
+const nf = (v, d = 1) => v == null ? "–" : v.toLocaleString("es-ES", {maximumFractionDigits: d});
+const ms = f => Date.parse(f + "T00:00:00Z");
+const fmt = (f, o = {day: "numeric", month: "short", year: "numeric"}) =>
+  new Date(ms(f)).toLocaleDateString("es-ES", {...o, timeZone: "UTC"});
+const S = {emb: null, par: null, idx: 0};
+let map, overlay, contorno, chart;
+
+/* ---------- Supabase (RPC de solo lectura) ---------- */
+const ESC = {
+  chla: {nombre: "Clorofila-a", unidad: "mg/m³", limites: [15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65],
+    colores: [[0,153,153],[0,102,153],[92,124,174],[117,150,182],[196,217,200],[111,165,80],[81,144,52],[44,106,22],[18,68,6],[102,102,0],[102,51,0]]},
+  pc: {nombre: "Ficocianina", unidad: "mg/m³", limites: [150,210,250,310,370,430,490,550,610,650,710,750,800,850],
+    colores: [[255,255,255],[255,240,240],[255,224,224],[255,208,208],[255,192,192],[255,128,128],[255,64,64],[255,0,0],[224,0,0],[192,0,0],[128,0,0],[96,0,0],[64,0,0],[0,0,0]]}
+};
+proj4.defs("EPSG:32630", "+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs");
+const vals = new Map(), urls = new Map();
+const slug = t => t.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\W+/g, "_").replace(/^_|_$/g, "").toLowerCase();
+
+function rpc(fn, args = {}) {
+  const h = {apikey: CONFIG.API_KEY, "Content-Type": "application/json"};
+  if (CONFIG.API_KEY.startsWith("eyJ")) h.Authorization = "Bearer " + CONFIG.API_KEY;
+  return fetch(`${CONFIG.SUPABASE_URL}/rest/v1/rpc/${fn}`, {method: "POST", headers: h, body: JSON.stringify(args)})
+    .then(async r => {
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).message || "HTTP " + r.status);
+      return r.json();
+    });
+}
+
+function construir(filas) {
+  const m = {};
+  filas.filter(f => ESC[f.parametro] && f.media != null).forEach(f => {
+    const nom = f.nombre || "Embalse " + f.embalse_fid;
+    const e = m[f.embalse_fid] ??= {fid: f.embalse_fid, nombre: nom, slug: slug(nom), parametros: {}};
+    const p = e.parametros[f.parametro] ??= {...ESC[f.parametro], imagenes: []};
+    p.imagenes.push({tabla: f.tabla, fecha: f.fecha, media: f.media, mediana: f.mediana ?? f.media,
+      min: f.minimo, max: f.maximo, p02: f.p02, p98: f.p98, area_ha: f.n * Math.abs(f.sx * f.sy) / 1e4,
+      ancho: f.ancho, alto: f.alto, ulx: f.ulx, uly: f.uly, sx: f.sx, sy: f.sy,
+      o: f.tesela ? {tesela: f.tesela, ancho: f.o_ancho, alto: f.o_alto, ulx: f.o_ulx, uly: f.o_uly, sx: f.o_sx, sy: f.o_sy} : null});
+  });
+  Object.values(m).forEach(e => Object.values(e.parametros).forEach(p => p.imagenes.sort((a, b) => a.fecha < b.fecha ? -1 : 1)));
+  return Object.values(m).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+// Límites WGS84 de un raster UTM 30N y ajuste afín lat/lon -> UTM (válido a escala de embalse)
+function geo(i) {
+  if (i._g) return i._g;
+  const x1 = i.ulx + i.sx * i.ancho, y1 = i.uly + i.sy * i.alto;
+  const c = [[i.ulx, i.uly], [x1, i.uly], [i.ulx, y1], [x1, y1]].map(q => proj4("EPSG:32630", "EPSG:4326", q));
+  const lo = c.map(q => q[0]), la = c.map(q => q[1]);
+  const g = {lonMin: Math.min(...lo), lonMax: Math.max(...lo), latMin: Math.min(...la), latMax: Math.max(...la)};
+  const f = (lon, lat) => proj4("EPSG:4326", "EPSG:32630", [lon, lat]);
+  g.nw = f(g.lonMin, g.latMax); g.ne = f(g.lonMax, g.latMax); g.sw = f(g.lonMin, g.latMin);
+  g.bounds = [[g.latMin, g.lonMin], [g.latMax, g.lonMax]];
+  return i._g = g;
+}
+
+// Escala adaptada: histórico del embalse y parámetro (p02 mínimo a p98 máximo de todas sus fechas)
+function escala(p, i) {
+  const base = ESC[S.par], modo = $("esc").value;
+  let lo, hi;
+  if (modo === "hist") {
+    const a = p.imagenes.filter(x => x.p02 != null && x.p98 != null);
+    if (a.length) { lo = Math.min(...a.map(x => x.p02)); hi = Math.max(...a.map(x => x.p98)); }
+  } else if (modo === "img" && i.p02 != null) { lo = i.p02; hi = i.p98; }
+  if (lo == null || !(hi > lo)) return base;
+  const mag = Math.pow(10, Math.floor(Math.log10(hi - lo)) - 1);
+  lo = Math.floor(lo / mag) * mag; hi = Math.ceil(hi / mag) * mag;
+  const n = base.colores.length;
+  return {...base, limites: Array.from({length: n}, (_, k) => lo + (hi - lo) * k / (n - 1))};
+}
+
+function colorear(v, e) {
+  const L = e.limites, C = e.colores;
+  if (v <= L[0]) return C[0];
+  if (v >= L[L.length - 1]) return C[C.length - 1];
+  let k = 1; while (v > L[k]) k++;
+  const t = (v - L[k - 1]) / (L[k] - L[k - 1]);
+  return C[k - 1].map((c, n) => c + (C[k][n] - c) * t);
+}
+
+function render(i, v, esc) {
+  const g = geo(i), ow = i.ancho, oh = i.alto, cv = document.createElement("canvas");
+  cv.width = ow; cv.height = oh;
+  const ctx = cv.getContext("2d"), im = ctx.createImageData(ow, oh), d = im.data;
+  const ax = g.ne[0] - g.nw[0], ay = g.ne[1] - g.nw[1], bx = g.sw[0] - g.nw[0], by = g.sw[1] - g.nw[1];
+  for (let j = 0; j < oh; j++) {
+    const s = (j + .5) / oh;
+    for (let k = 0; k < ow; k++) {
+      const u = (k + .5) / ow;
+      const col = Math.floor((g.nw[0] + u * ax + s * bx - i.ulx) / i.sx);
+      const row = Math.floor((g.nw[1] + u * ay + s * by - i.uly) / i.sy);
+      if (col < 0 || col >= i.ancho || row < 0 || row >= i.alto) continue;
+      const val = v[row * i.ancho + col];
+      if (val == null || val <= -9000) continue;
+      const [R, G, B] = colorear(val, esc), o = (j * ow + k) * 4;
+      d[o] = R; d[o + 1] = G; d[o + 2] = B; d[o + 3] = 255;
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+  return cv.toDataURL("image/png");
+}
+
+/* ---------- Inicio ---------- */
+function pintarLista() {
+  $("vacio").hidden = EMB.length > 0;
+  $("vacio").textContent = "No hay rasters en PostGIS (esquema rasters).";
+  $("lista").innerHTML = "";
+  EMB.forEach(e => {
+    const pars = Object.entries(e.parametros);
+    const n = Math.max(...pars.map(([, p]) => p.imagenes.length));
+    const todas = pars.flatMap(([, p]) => p.imagenes.map(i => i.fecha)).sort();
+    const ult = pars.map(([k, p]) => {
+      const i = p.imagenes[p.imagenes.length - 1];
+      return `${p.nombre} <b>${nf(i.media)}</b> ${p.unidad}`;
+    }).join(" y ");
+    const li = document.createElement("li");
+    li.innerHTML = `<button><span class="n"></span><span class="m">${n} fechas, ${fmt(todas[0], {month: "short", year: "numeric"})} a ${fmt(todas[todas.length - 1], {month: "short", year: "numeric"})}</span><span class="v">Última media: ${ult}</span></button>`;
+    li.querySelector(".n").textContent = e.nombre;
+    li.firstChild.onclick = () => abrir(e.slug);
+    $("lista").appendChild(li);
+  });
+}
+
+/* ---------- Visor ---------- */
+function iniciarMapa() {
+  if (map) return;
+  map = L.map("map");
+  const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
+    {maxZoom: 19, attribution: "© OpenStreetMap"});
+  const pnoa = L.tileLayer.wms("https://www.ign.es/wms-inspire/pnoa-ma",
+    {layers: "OI.OrthoimageCoverage", format: "image/jpeg", maxZoom: 20, attribution: "PNOA © IGN"});
+  osm.addTo(map);
+  map.on("moveend", () => { clearTimeout(hrTimer); hrTimer = setTimeout(hrCargar, 250); });
+  L.control.layers({"OpenStreetMap": osm, "Ortofoto PNOA": pnoa}, null, {collapsed: false}).addTo(map);
+}
+
+function abrir(slug) {
+  S.emb = EMB.find(e => e.slug === slug);
+  if (!S.emb) return;
+  location.hash = slug;
+  $("inicio").hidden = true; $("visor").hidden = false;
+  iniciarMapa(); map.invalidateSize();
+  $("tit").textContent = S.emb.nombre;
+  document.title = S.emb.nombre + " · Sentinel-2";
+  if (contorno) map.removeLayer(contorno);
+  contorno = null;
+  const emb = S.emb;
+  (emb.contorno ? Promise.resolve(emb.contorno) : rpc("embalse_contorno", {p_fid: emb.fid}).then(g => emb.contorno = g))
+    .then(g => {
+      if (!g || S.emb !== emb) return;
+      if (contorno) map.removeLayer(contorno);
+      contorno = L.geoJSON(g, {style: {color: "#fff", weight: 1.5, fill: false}}).addTo(map);
+    }).catch(() => {});
+  const keys = Object.keys(S.emb.parametros);
+  $("params").innerHTML = "";
+  keys.forEach(k => {
+    const b = document.createElement("button");
+    b.textContent = S.emb.parametros[k].nombre;
+    b.dataset.k = k;
+    b.onclick = () => cambiarParametro(k);
+    $("params").appendChild(b);
+  });
+  S.par = null; S.idx = 0;
+  cambiarParametro(keys[0], true);
+}
+
+const P = () => S.emb.parametros[S.par];
+
+function cambiarParametro(k, primera) {
+  const fechaActual = !primera && P() ? P().imagenes[S.idx].fecha : null;
+  S.par = k;
+  [...$("params").children].forEach(b => b.setAttribute("aria-pressed", b.dataset.k === k));
+  const im = P().imagenes;
+  $("fecha").innerHTML = im.map((i, n) => `<option value="${n}">${fmt(i.fecha)}</option>`).join("");
+  $("slider").max = im.length - 1;
+  S.idx = im.length - 1;
+  if (fechaActual) { // misma fecha o la más cercana
+    const t = ms(fechaActual);
+    S.idx = im.reduce((b, i, n) => Math.abs(ms(i.fecha) - t) < Math.abs(ms(im[b].fecha) - t) ? n : b, 0);
+  }
+  grafica(); mostrar(primera);
+}
+
+/* ---------- Detalle a resolución nativa (rasters grandes): teselas de la zona visible ---------- */
+const turls = new Map();
+let hr = null, hrTimer;
+function ovOp() { if (overlay) overlay.setOpacity(hr && hr.completo ? 0 : +$("op").value); }
+function hrReset() { if (hr) map.removeLayer(hr.grupo); hr = null; ovOp(); }
+async function hrCargar() {
+  if ($("visor").hidden || !S.emb || !S.par) return;
+  const p = P(), i = p.imagenes[S.idx], o = i.o;
+  if (!o) return;
+  const c = map.getCenter(), res = 156543.03392 * Math.cos(c.lat * Math.PI / 180) / 2 ** map.getZoom();
+  if (res >= Math.abs(i.sx) / 2) { if (hr) hrReset(); return; } // la versión reducida basta
+  const esc = escala(p, i), ek = esc.limites[0] + "|" + esc.limites[esc.limites.length - 1];
+  if (!hr || hr.tabla !== i.tabla || hr.ek !== ek) {
+    hrReset(); hr = {tabla: i.tabla, ek, grupo: L.layerGroup().addTo(map), hechas: new Set(), completo: false};
+  }
+  const st = hr, T = o.tesela, w = T * o.sx, h = T * o.sy;
+  const b = map.getBounds(), q = [b.getSouthWest(), b.getNorthEast(), b.getNorthWest(), b.getSouthEast()]
+    .map(x => proj4("EPSG:4326", "EPSG:32630", [x.lng, x.lat]));
+  const xs = q.map(x => x[0]), ys = q.map(x => x[1]), nc = Math.ceil(o.ancho / T), nr = Math.ceil(o.alto / T);
+  const cl = (v, n) => Math.max(0, Math.min(n - 1, v));
+  const c0 = cl(Math.floor((Math.min(...xs) - o.ulx) / w), nc), c1 = cl(Math.floor((Math.max(...xs) - o.ulx) / w), nc);
+  const r0 = cl(Math.floor((Math.max(...ys) - o.uly) / h), nr), r1 = cl(Math.floor((Math.min(...ys) - o.uly) / h), nr);
+  const pend = [];
+  for (let r = r0; r <= r1; r++) for (let k = c0; k <= c1; k++) if (!st.hechas.has(r + "|" + k)) pend.push([r, k]);
+  st.completo = pend.length === 0; ovOp();
+  if (!pend.length) return;
+  $("estado").textContent = `Cargando detalle a ${nf(Math.abs(o.sx), 0)} m (${pend.length} teselas)…`;
+  let n = 0;
+  const trabajar = async () => {
+    while (n < pend.length && hr === st) {
+      const [r, k] = pend[n++], key = r + "|" + k;
+      try {
+        const t = {ulx: o.ulx + k * w, uly: o.uly + r * h, sx: o.sx, sy: o.sy, ancho: T, alto: T};
+        const uk = `${i.tabla}|${key}|${ek}`;
+        let url = turls.get(uk);
+        if (url === undefined) {
+          const v = await rpc("raster_tesela", {p_tabla: i.tabla, p_x: t.ulx + w / 2, p_y: t.uly + h / 2});
+          url = v ? render(t, v, esc) : null;
+          if (turls.size > 600) turls.delete(turls.keys().next().value);
+          turls.set(uk, url);
+        }
+        if (hr !== st) return;
+        if (url) L.imageOverlay(url, geo(t).bounds, {opacity: +$("op").value, className: "pix"}).addTo(st.grupo);
+        st.hechas.add(key);
+      } catch (e) { /* se reintenta en el siguiente movimiento del mapa */ }
+    }
+  };
+  await Promise.all(Array.from({length: 6}, trabajar));
+  if (hr === st) {
+    st.completo = pend.every(([r, k]) => st.hechas.has(r + "|" + k)); ovOp();
+    $("estado").textContent = st.completo ? "" : "Algunas teselas no se pudieron cargar; mueve el mapa para reintentar.";
+  }
+}
+
+let tok = 0;
+async function mostrar(ajustar) {
+  const p = P(), i = p.imagenes[S.idx], mi = ++tok;
+  hrReset();
+  $("fecha").value = S.idx; $("slider").value = S.idx;
+  $("prev").disabled = S.idx === 0; $("next").disabled = S.idx === p.imagenes.length - 1;
+  $("stats").innerHTML = [["Media", i.media], ["Mediana", i.mediana], ["Mínimo", i.min], ["Máximo", i.max]]
+    .map(([t, v]) => `<dt>${t}</dt><dd>${nf(v)} ${p.unidad}</dd>`).join("")
+    + `<dt>Superficie válida</dt><dd>${nf(i.area_ha, 0)} ha</dd>`;
+  if (chart) chart.update("none");
+  const esc = escala(p, i); leyenda(esc);
+  const b = geo(i).bounds;
+  if (ajustar) map.fitBounds(b, {padding: [20, 20]});
+  $("estado").textContent = "Cargando imagen desde PostGIS…";
+  try {
+    const key = `${i.tabla}|${esc.limites[0]}|${esc.limites[esc.limites.length - 1]}`;
+    let url = urls.get(key);
+    if (!url) {
+      let v = vals.get(i.tabla);
+      if (!v) {
+        v = await rpc("raster_valores", {p_tabla: i.tabla});
+        if (vals.size > 30) vals.delete(vals.keys().next().value);
+        vals.set(i.tabla, v);
+      }
+      url = render(i, v, esc); urls.set(key, url);
+    }
+    if (mi !== tok) return;
+    if (overlay) map.removeLayer(overlay);
+    overlay = L.imageOverlay(url, b, {opacity: +$("op").value, className: "pix"}).addTo(map);
+    $("estado").textContent = "";
+    hrCargar();
+  } catch (e) { if (mi === tok) $("estado").textContent = "Error: " + e.message; }
+}
+
+function leyenda(e) {
+  const p = P(), L_ = e.limites, a = L_[0], z = L_[L_.length - 1], d = z - a < 1 ? 2 : z - a < 10 ? 1 : 0;
+  $("leyT").textContent = `${p.nombre} (${p.unidad})`;
+  $("barra").style.background = "linear-gradient(90deg," +
+    e.colores.map((x, n) => `rgb(${x}) ${(L_[n] - a) / (z - a) * 100}%`).join(",") + ")";
+  const paso = Math.ceil(L_.length / 5);
+  $("ticks").innerHTML = L_.filter((_, n) => n % paso === 0 || n === L_.length - 1).map(v => `<span>${nf(v, d)}</span>`).join("");
+}
+
+function grafica() {
+  const p = P(), st = $("stat").value, nombreSt = $("stat").selectedOptions[0].text;
+  $("gt").textContent = `${p.nombre}: ${nombreSt.toLowerCase()} por fecha (${p.unidad})`;
+  const datos = p.imagenes.map(i => ({x: ms(i.fecha), y: i[st]}));
+  if (chart) chart.destroy();
+  chart = new Chart($("cv"), {
+    type: "line",
+    data: {datasets: [{data: datos, borderColor: "#0a6c7a", backgroundColor: "#0a6c7a", borderWidth: 2, tension: 0,
+      pointRadius: c => c.dataIndex === S.idx ? 8 : 3.5,
+      pointBackgroundColor: c => c.dataIndex === S.idx ? "#b4441c" : "#0a6c7a",
+      pointBorderColor: c => c.dataIndex === S.idx ? "#fff" : "#0a6c7a", pointBorderWidth: 2}]},
+    options: {
+      parsing: false, maintainAspectRatio: false, animation: false,
+      interaction: {mode: "nearest", intersect: false, axis: "x"},
+      onClick: (_, el) => { if (el.length) { S.idx = el[0].index; mostrar(false); } },
+      onHover: (e, el) => e.native.target.style.cursor = el.length ? "pointer" : "default",
+      plugins: {legend: {display: false}, tooltip: {callbacks: {
+        title: t => fmt(p.imagenes[t[0].dataIndex].fecha),
+        label: t => `${nombreSt}: ${nf(t.parsed.y)} ${p.unidad}`}}},
+      scales: {
+        x: {type: "linear", ...(datos.length === 1 ? {min: datos[0].x - 15 * 864e5, max: datos[0].x + 15 * 864e5} : {}), ticks: {maxTicksLimit: 8, callback: v =>
+          new Date(v).toLocaleDateString("es-ES", {month: "short", year: "2-digit", timeZone: "UTC"})},
+          grid: {color: "#e1e8e6"}},
+        y: {title: {display: true, text: p.unidad}, grid: {color: "#e1e8e6"}}
+      }
+    }
+  });
+}
+
+/* ---------- Eventos ---------- */
+$("volver").onclick = () => { $("visor").hidden = true; $("inicio").hidden = false; location.hash = ""; document.title = "Embalses · Sentinel-2"; };
+$("fecha").onchange = e => { S.idx = +e.target.value; mostrar(false); };
+$("slider").oninput = e => { S.idx = +e.target.value; mostrar(false); };
+$("prev").onclick = () => { S.idx--; mostrar(false); };
+$("next").onclick = () => { S.idx++; mostrar(false); };
+$("stat").onchange = grafica;
+$("esc").onchange = () => mostrar(false);
+$("op").oninput = e => { ovOp(); if (hr) hr.grupo.eachLayer(l => l.setOpacity(+e.target.value)); };
+document.addEventListener("keydown", e => {
+  if ($("visor").hidden || /SELECT|INPUT/.test(e.target.tagName)) return;
+  if (e.key === "ArrowLeft" && S.idx > 0) { S.idx--; mostrar(false); }
+  if (e.key === "ArrowRight" && S.idx < P().imagenes.length - 1) { S.idx++; mostrar(false); }
+});
+
+rpc("rasters_listado").then(f => {
+  EMB = construir(f); pintarLista();
+  if (location.hash.length > 1) abrir(decodeURIComponent(location.hash.slice(1)));
+}).catch(e => { $("vacio").hidden = false; $("vacio").textContent = "No se pudo leer PostGIS: " + e.message + ". Revisa config.js y que hayas ejecutado supabase_funciones.sql."; });
+</script>
+</body>
+</html>
