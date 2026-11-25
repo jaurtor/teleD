@@ -9,6 +9,11 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
+#params{overflow:visible}
+#params button:first-child{border-radius:3px 0 0 3px}
+#params button:last-child{border-radius:0 3px 3px 0}
+#params button[data-tip]{position:relative}
+#params button[data-tip]:hover::after{content:attr(data-tip);position:absolute;left:0;top:calc(100% + 6px);z-index:1000;width:240px;padding:8px 10px;border-radius:6px;background:var(--ink);color:#fff;font-size:12px;font-weight:400;line-height:1.35;text-align:left;white-space:normal;box-shadow:0 2px 8px rgba(0,0,0,.25);pointer-events:none}
 :root{--paper:#f1f4f2;--panel:#fbfcfb;--ink:#10282f;--muted:#5b7077;--line:#c9d4d2;--water:#0a6c7a;--mark:#b4441c;
  --serif:"Fraunces",Georgia,serif;--sans:"Instrument Sans",system-ui,sans-serif}
 *{box-sizing:border-box}
@@ -121,10 +126,16 @@ let map, overlay, contorno, chart;
 
 /* ---------- Supabase (RPC de solo lectura) ---------- */
 const ESC = {
-  chla: {nombre: "Clorofila-a", unidad: "mg/m³", limites: [15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65],
+  chla: {nombre: "Clorofila-a", unidad: "µg/L", def: "Chl-a (Chlorophyll a): a measure of phytoplankton biomass.", limites: [15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65],
     colores: [[0,153,153],[0,102,153],[92,124,174],[117,150,182],[196,217,200],[111,165,80],[81,144,52],[44,106,22],[18,68,6],[102,102,0],[102,51,0]]},
-  pc: {nombre: "Ficocianina", unidad: "mg/m³", limites: [150,210,250,310,370,430,490,550,610,650,710,750,800,850],
-    colores: [[255,255,255],[255,240,240],[255,224,224],[255,208,208],[255,192,192],[255,128,128],[255,64,64],[255,0,0],[224,0,0],[192,0,0],[128,0,0],[96,0,0],[64,0,0],[0,0,0]]}
+  pc: {nombre: "Ficocianina", unidad: "µg/L", def: "PC (Phycocyanin): a pigment found in cyanobacteria (blue-green algae), often used to indicate blooms.", limites: [150,210,250,310,370,430,490,550,610,650,710,750,800,850],
+    colores: [[255,255,255],[255,240,240],[255,224,224],[255,208,208],[255,192,192],[255,128,128],[255,64,64],[255,0,0],[224,0,0],[192,0,0],[128,0,0],[96,0,0],[64,0,0],[0,0,0]]},
+  sdd: {nombre: "SDD", unidad: "m", def: "SDD (Secchi Disk Depth): an indicator of water transparency.", limites: [0,0.5,1,1.5,2,3,4,5],
+    colores: [[102,51,0],[153,102,51],[196,170,110],[150,190,150],[90,170,170],[40,130,180],[20,80,160],[10,40,110]]},
+  tsm: {nombre: "TSM", unidad: "mg/L", def: "TSM (Total Suspended Matter): the concentration of all particles suspended in the water column.", limites: [0,2,5,10,20,40,80,150],
+    colores: [[10,40,110],[40,130,180],[90,170,170],[196,217,160],[220,190,110],[190,140,70],[140,90,40],[90,50,20]]},
+  pt: {nombre: "PT", unidad: "µg P/L", def: "PT (Phosphorus Total): the total amount of phosphorus in the water, a key nutrient for algal growth.", limites: [0,10,25,50,100,150,250,400],
+    colores: [[240,240,255],[210,200,240],[175,160,225],[140,120,205],[110,80,180],[85,50,150],[60,25,115],[35,0,75]]}
 };
 proj4.defs("EPSG:32630", "+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs");
 const vals = new Map(), urls = new Map();
@@ -271,6 +282,7 @@ function abrir(slug) {
     const b = document.createElement("button");
     b.textContent = S.emb.parametros[k].nombre;
     b.dataset.k = k;
+    b.dataset.tip = S.emb.parametros[k].def || "";
     b.onclick = () => cambiarParametro(k);
     $("params").appendChild(b);
   });
