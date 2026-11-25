@@ -264,11 +264,14 @@ function iniciarMapa() {
   map = L.map("map");
   const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
     {maxZoom: 19, attribution: "© OpenStreetMap"});
-  const pnoa = L.tileLayer.wms("https://www.ign.es/wms-inspire/pnoa-ma",
-    {layers: "OI.OrthoimageCoverage", format: "image/jpeg", maxZoom: 20, attribution: "PNOA © IGN"});
+  const wmts = (url, capa, attr, max) => L.tileLayer(url + "?service=WMTS&request=GetTile&version=1.0.0&layer=" + capa
+    + "&style=default&tilematrixset=GoogleMapsCompatible&format=image/jpeg&tilematrix={z}&tilerow={y}&tilecol={x}",
+    {maxZoom: max, attribution: attr});
+  const pnoa = wmts("https://www.ign.es/wmts/pnoa-ma", "OI.OrthoimageCoverage", "PNOA © IGN", 20);
+  const base = wmts("https://www.ign.es/wmts/ign-base", "IGNBaseTodo", "Mapa base © IGN", 20);
   osm.addTo(map);
   map.on("moveend", () => { clearTimeout(hrTimer); hrTimer = setTimeout(hrCargar, 250); });
-  L.control.layers({"OpenStreetMap": osm, "Ortofoto PNOA": pnoa}, null, {collapsed: false}).addTo(map);
+  L.control.layers({"OpenStreetMap": osm, "Mapa base IGN": base, "Ortofoto PNOA": pnoa}, null, {collapsed: false}).addTo(map);
 }
 
 function abrir(slug) {
