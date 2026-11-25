@@ -9,12 +9,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-.pdef{font-size:12px;line-height:1.35;color:var(--muted);margin-top:6px;min-height:4.1em}
+.pdef{font-size:12px;line-height:1.35;color:var(--muted);margin-top:6px;min-height:2.7em}
 #cal{position:absolute;left:0;right:0;z-index:1000;margin-top:4px;padding:8px;background:#fff;border:1px solid var(--ink);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.2)}
 #cal[hidden]{display:none}
 #cal .ch{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
 #cal .ch button{border:1px solid var(--line);background:#fff;border-radius:4px;width:28px;height:26px}
 #cal .ch button:disabled{opacity:.3}
+#cal .ch select{border:1px solid var(--line);background:#fff;border-radius:4px;padding:3px 4px;font-weight:700;font-size:13px;margin:0 2px}
 #cal .cg{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;text-align:center;font-size:12px}
 #cal .w{color:var(--muted);font-size:11px;padding:2px 0}
 #cal .x{color:#b9c4c2;padding:5px 0}
@@ -136,13 +137,13 @@ let map, overlay, contorno, chart;
 const ESC = {
   chla: {nombre: "Clorofila-a", unidad: "µg/L", def: "Clorofila-a: medida de la biomasa del fitoplancton.", limites: [15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65],
     colores: [[0,153,153],[0,102,153],[92,124,174],[117,150,182],[196,217,200],[111,165,80],[81,144,52],[44,106,22],[18,68,6],[102,102,0],[102,51,0]]},
-  pc: {nombre: "Ficocianina", unidad: "µg/L", def: "Ficocianina: pigmento presente en las cianobacterias (algas verdeazuladas), usado a menudo como indicador de floraciones.", limites: [150,210,250,310,370,430,490,550,610,650,710,750,800,850],
+  pc: {nombre: "Ficocianina", unidad: "µg/L", def: "Ficocianina: pigmento de las cianobacterias (algas verdeazuladas), indicador de floraciones.", limites: [150,210,250,310,370,430,490,550,610,650,710,750,800,850],
     colores: [[255,255,255],[255,240,240],[255,224,224],[255,208,208],[255,192,192],[255,128,128],[255,64,64],[255,0,0],[224,0,0],[192,0,0],[128,0,0],[96,0,0],[64,0,0],[0,0,0]]},
   sdd: {nombre: "SDD", unidad: "m", def: "SDD (profundidad del disco de Secchi): indicador de la transparencia del agua.", limites: [0,0.5,1,1.5,2,3,4,5],
     colores: [[102,51,0],[153,102,51],[196,170,110],[150,190,150],[90,170,170],[40,130,180],[20,80,160],[10,40,110]]},
-  tsm: {nombre: "TSM", unidad: "mg/L", def: "TSM (materia total en suspensión): concentración de todas las partículas suspendidas en la columna de agua.", limites: [0,2,5,10,20,40,80,150],
+  tsm: {nombre: "TSM", unidad: "mg/L", def: "TSM (materia total en suspensión): concentración de partículas suspendidas en el agua.", limites: [0,2,5,10,20,40,80,150],
     colores: [[10,40,110],[40,130,180],[90,170,170],[196,217,160],[220,190,110],[190,140,70],[140,90,40],[90,50,20]]},
-  pt: {nombre: "PT", unidad: "µg P/L", def: "PT (fósforo total): cantidad total de fósforo en el agua, nutriente clave para el crecimiento de las algas.", limites: [0,10,25,50,100,150,250,400],
+  pt: {nombre: "PT", unidad: "µg P/L", def: "PT (fósforo total): fósforo total del agua, nutriente clave para el crecimiento de algas.", limites: [0,10,25,50,100,150,250,400],
     colores: [[240,240,255],[210,200,240],[175,160,225],[140,120,205],[110,80,180],[85,50,150],[60,25,115],[35,0,75]]}
 };
 proj4.defs("EPSG:32630", "+proj=utm +zone=30 +datum=WGS84 +units=m +no_defs");
@@ -466,7 +467,9 @@ function calRender() {
   if (!calMes) calMes = {y: +im[S.idx].fecha.slice(0, 4), m: +im[S.idx].fecha.slice(5, 7) - 1};
   const {y, m} = calMes, z = v => String(v).padStart(2, "0"), cur = `${y}-${z(m + 1)}`;
   const off = (new Date(Date.UTC(y, m, 1)).getUTCDay() + 6) % 7, dias = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  let h = `<div class="ch"><button data-d="-1" ${cur <= im[0].fecha.slice(0, 7) ? "disabled" : ""}>‹</button><b>${MESES[m]} ${y}</b><button data-d="1" ${cur >= im[im.length - 1].fecha.slice(0, 7) ? "disabled" : ""}>›</button></div><div class="cg">`
+  const y0 = +im[0].fecha.slice(0, 4), y1 = +im[im.length - 1].fecha.slice(0, 4), yrs = [];
+  for (let a = Math.min(y0, y); a <= Math.max(y1, y); a++) yrs.push(a);
+  let h = `<div class="ch"><button data-d="-1" ${cur <= im[0].fecha.slice(0, 7) ? "disabled" : ""}>‹</button><span><select data-s="m">${MESES.map((n, k) => `<option value="${k}"${k === m ? " selected" : ""}>${n}</option>`).join("")}</select><select data-s="y">${yrs.map(a => `<option${a === y ? " selected" : ""}>${a}</option>`).join("")}</select></span><button data-d="1" ${cur >= im[im.length - 1].fecha.slice(0, 7) ? "disabled" : ""}>›</button></div><div class="cg">`
     + ["L", "M", "X", "J", "V", "S", "D"].map(d => `<span class="w">${d}</span>`).join("") + "<span></span>".repeat(off);
   for (let d = 1; d <= dias; d++) {
     const n = mp[`${cur}-${z(d)}`];
@@ -481,6 +484,7 @@ $("cal").onclick = e => {
   if (b.dataset.d) { calMes.m += +b.dataset.d; if (calMes.m < 0) { calMes.m = 11; calMes.y--; } if (calMes.m > 11) { calMes.m = 0; calMes.y++; } calRender(); }
   else { S.idx = +b.dataset.n; $("cal").hidden = true; mostrar(false); }
 };
+$("cal").onchange = e => { calMes[e.target.dataset.s] = +e.target.value; calRender(); };
 document.addEventListener("click", () => $("cal").hidden = true);
 document.addEventListener("keydown", e => { if (e.key === "Escape") $("cal").hidden = true; });
 $("slider").oninput = e => { S.idx = +e.target.value; mostrar(false); };
